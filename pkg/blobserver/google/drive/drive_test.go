@@ -125,6 +125,5 @@ func TestStorage(t *testing.T) {
 			}
 			return sto, clearDirectory
 		},
-		SkipEnum: true,
 	})
 }

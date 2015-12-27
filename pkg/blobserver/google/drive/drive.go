@@ -49,6 +49,13 @@ const Scope = "https://www.googleapis.com/auth/drive"
 
 type driveStorage struct {
 	service *service.DriveService
+	// prefixLength is the number of hex digits used while
+	// generating prefixes of the digest space.  For instance if
+	// this is 3, then we'll generate prefixes like "sha1-000",
+	// "sha1-001", ..., "sha1-fff".  If this value is zero, the
+	// only prefix we'll generate is "sha1-", which will work fine
+	// if there are very few blobs in the Drive folder.
+	prefixLength int
 }
 
 func newFromConfig(_ blobserver.Loader, config jsonconfig.Obj) (blobserver.Storage, error) {

@@ -283,3 +283,28 @@ func TestJSONMarshalSized(t *testing.T) {
 		t.Fatalf("got %q, want %q", g, e)
 	}
 }
+
+var prefixTests = []struct {
+	in   string
+	want string
+	ok   bool
+}{
+	{in: "test-0000", want: "test-0001", ok: true},
+	{in: "test-000f", want: "test-0010", ok: true},
+	{in: "test-10ff", want: "test-1100", ok: true},
+	{in: "test-ffff", ok: false},
+	{in: "test-xxxx", ok: false},
+}
+
+func TestNextPrefix(t *testing.T) {
+	for _, pt := range prefixTests {
+		r, ok := NextPrefix(pt.in)
+		if ok != pt.ok {
+			t.Errorf("NextPrefix(%q) didn't fail.  It should have.", pt.in)
+			continue
+		}
+		if r != pt.want {
+			t.Errorf("NextPrefix(%q) = %q; want %q", pt.in, r, pt.want)
+		}
+	}
+}

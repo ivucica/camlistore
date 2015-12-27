@@ -25,6 +25,7 @@ import (
 	"hash"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 
 	// This is a pretty low-level package, so add the Go minimum
@@ -454,6 +455,57 @@ func metaFromBytes(name []byte) (meta *digestMeta, ok bool) {
 		}
 	}
 	return
+}
+
+// Given just the digest part, e.g. '1234', increment that.  Note,
+// works on well-formed digests of any nonzero length ( [0-9a-f]+ ).
+func incrementDigest(digest string) (string, error) {
+	if digest == "" {
+		return "", errors.New("empty digest is invalid")
+	}
+
+	b := []byte(digest)
+	i := len(b)
+
+	for i > 0 {
+		i--
+		v, err := strconv.ParseUint(digest[i:i+1], 16, 8)
+		if err != nil {
+			return "", err
+		}
+		b[i] = hexDigit[(v+1)%16]
+
+		if b[i] != '0' {
+			break
+		}
+	}
+	if i == 0 && b[i] == '0' {
+		// overflow
+		return "", errors.New("digest overflowed")
+	}
+	return string(b), nil
+}
+
+// NextPrefix takes a stringified blob.Ref prefix, and returns the
+// subsequent prefix of the same length.  If there is no following
+// prefix, the returned ok is false.
+//
+//   "sha1-000" -> "sha1-001", true
+//   "sha1-3ff" -> "sha1-400", true
+//   "sha1-fff" -> "", false  // enumeration is done
+//   "sha1-xxx" -> "", false  // malformed input
+func NextPrefix(s string) (ns string, ok bool) {
+	i := strings.Index(s, "-")
+	if i < 0 {
+		ok = false
+		return
+	}
+	nextDigest, err := incrementDigest(s[i+1:])
+	if err != nil {
+		ok = false
+		return
+	}
+	return s[:i] + "-" + nextDigest, true
 }
 
 func init() {

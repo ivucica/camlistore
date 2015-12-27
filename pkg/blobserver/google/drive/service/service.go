@@ -62,10 +62,35 @@ func New(oauthClient *http.Client, parentId string) (*DriveService, error) {
 // Get retrieves a file with its title equal to the provided title and a child of
 // the parentId as given to New. If not found, os.ErrNotExist is returned.
 func (s *DriveService) Get(title string) (*client.File, error) {
+	return s.GetFields(title, "")
+}
+
+// GetFields retrieves a file with its title equal to the provided id and a
+// child of the parentId as given to New. If not found, os.ErrNotExist is
+// returned.  It also takes a 'fields' parameter, which lets you inform the API
+// what information you care about.
+//
+// f you only care about the filename ('items.title') and size
+// ('items.fileSize'), you can tell the API that those are the only fields you
+// want in the response.  This can save some bytes on the wire and can also
+// potentially be faster, since the API has to do fewer calculations /
+// retrievals.  It is a comma-separated string, where each part is the name of a
+// field.
+//
+// See https://developers.google.com/drive/v2/reference/files/list#try-it for a
+// javascript-enabled editor that shows you what fields are available.
+func (s *DriveService) GetFields(title string, fields string) (*client.File, error) {
 	req := s.apiservice.Files.List()
-	// TODO: use field selectors
-	query := fmt.Sprintf("'%s' in parents and title = '%s'", s.parentId, title)
+
+	query := fmt.Sprintf("%q in parents and title = %q", s.parentId, title)
 	req.Q(query)
+
+	if fields != "" {
+		// TODO(ivucica): tmp/build-gopath-nosqlite/src/camlistore.org/pkg/blobserver/google/drive/service/service.go:89: cannot use fields (type string) as type googleapi.Field in argument to req.Fields
+
+		//req.Fields(fields)
+	}
+
 	files, err := req.Do()
 	if err != nil {
 		return nil, err
@@ -77,9 +102,14 @@ func (s *DriveService) Get(title string) (*client.File, error) {
 }
 
 // Lists the folder identified by parentId.
-func (s *DriveService) List(pageToken string, limit int) (files []*client.File, next string, err error) {
+func (s *DriveService) List(prefix string, pageToken string, limit int) (files []*client.File, next string, err error) {
 	req := s.apiservice.Files.List()
-	req.Q(fmt.Sprintf("'%s' in parents and mimeType != '%s'", s.parentId, MimeTypeDriveFolder))
+
+	query := fmt.Sprintf("%q in parents and mimeType != %q and title contains %q",
+		s.parentId, MimeTypeDriveFolder, prefix)
+	req.Q(query)
+
+	req.Fields("items(fileSize,title),nextPageToken")
 
 	if pageToken != "" {
 		req.PageToken(pageToken)
@@ -120,10 +150,11 @@ var errNoDownload = errors.New("file can not be downloaded directly (conversion 
 
 // Fetch retrieves the metadata and contents of a file.
 func (s *DriveService) Fetch(title string) (body io.ReadCloser, size uint32, err error) {
-	file, err := s.Get(title)
+	file, err := s.GetFields(title, "items(downloadUrl,fileSize)")
 	if err != nil {
 		return
 	}
+
 	// TODO: maybe in the case of no download link, remove the file.
 	// The file should have malformed or converted to a Docs file
 	// unwantedly.
@@ -152,7 +183,7 @@ func (s *DriveService) Fetch(title string) (body io.ReadCloser, size uint32, err
 // Stat retrieves file metadata and returns
 // file size. Returns error if file is not found.
 func (s *DriveService) Stat(title string) (int64, error) {
-	file, err := s.Get(title)
+	file, err := s.GetFields(title, "items(fileSize)")
 	if err != nil || file == nil {
 		return 0, err
 	}
