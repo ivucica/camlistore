@@ -259,6 +259,9 @@ type syncStatus struct {
 	BlobsToCopy    int    `json:"blobsToCopy"`
 	BytesToCopy    int64  `json:"bytesToCopy"`
 	LastCopySecAgo int    `json:"lastCopySecondsAgo,omitempty"`
+	BlobsCopied    int64  `json:"blobsCopied"`
+	BytesCopied    int64  `json:"bytesCopied"`
+	TotalErrors    int64  `json:"totalErrors"`
 }
 
 func (sh *SyncHandler) currentStatus() syncStatus {
@@ -278,6 +281,9 @@ func (sh *SyncHandler) currentStatus() syncStatus {
 		BlobsToCopy:    len(sh.needCopy),
 		BytesToCopy:    sh.bytesRemain,
 		LastCopySecAgo: ago,
+		BlobsCopied:    sh.totalCopies,
+		BytesCopied:    sh.totalCopyBytes,
+		TotalErrors:    sh.totalErrors,
 	}
 }
 
