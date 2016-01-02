@@ -102,6 +102,8 @@ func (sh *StatusHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	switch suffix {
 	case "status.json":
 		sh.serveStatusJSON(rw, req)
+	case "status.metrics":
+		sh.serveStatusMetrics(rw, req)
 	case "":
 		sh.serveStatusHTML(rw, req)
 	default:
@@ -206,6 +208,111 @@ func (sh *StatusHandler) currentStatus() *status {
 
 func (sh *StatusHandler) serveStatusJSON(rw http.ResponseWriter, req *http.Request) {
 	httputil.ReturnJSON(rw, sh.currentStatus())
+}
+
+func (sh *StatusHandler) serveStatusMetrics(rw http.ResponseWriter, req *http.Request) {
+	// Implements serving of Prometheus.io metrics file.
+	// Text format only.
+	// Does not use client library to avoid introducing dependency.
+
+	rw.Header().Set("Content-type", "text/plain; version=0.0.4")
+	quoted := func(s string) string {
+		return strings.Replace(strings.Replace(s, "\\", "\\\\", -1), "\"", "\\\"", -1)
+	}
+
+	status := sh.currentStatus()
+
+	// No support for strings? :(
+	//fmt.Fprintln(rw, "# HELP camliVersion Specifies the version of Camlistore.")
+	//fmt.Fprintln(rw, "# TYPE camliVersion untyped")
+	//fmt.Fprintln(rw, "camliVersion", status.Version)
+
+	fmt.Fprintln(rw, "# HELP camliSync_blobsToCopy How many blobs are left to be copied.")
+	fmt.Fprintln(rw, "# TYPE camliSync_blobsToCopy gauge")
+	fmt.Fprintln(rw, "# HELP camliSync_bytesToCopy How many bytes are left to be copied.")
+	fmt.Fprintln(rw, "# TYPE camliSync_bytesToCopy gauge")
+	fmt.Fprintln(rw, "# HELP camliSync_blobsCopied How many blobs have been copied since startup.")
+	fmt.Fprintln(rw, "# TYPE camliSync_blobsCopied counter")
+	fmt.Fprintln(rw, "# HELP camliSync_bytesCopied How many bytes have been copied since startup.")
+	fmt.Fprintln(rw, "# TYPE camliSync_bytesCopied counter")
+	fmt.Fprintln(rw, "# HELP camliSync_totalErrors How many errors have occurred since startup.")
+	fmt.Fprintln(rw, "# TYPE camliSync_totalErrors counter")
+
+	for syncKey, syncValue := range status.Sync {
+		labels := fmt.Sprintf("version=\"%s\", path=\"%s\", from=\"%s\", to=\"%s\"", quoted(status.Version), quoted(syncKey), quoted(syncValue.From), quoted(syncValue.To))
+
+		fmt.Fprintf(rw, "camliSync_blobsToCopy{%s} %d\n", labels, syncValue.BlobsToCopy)
+		fmt.Fprintf(rw, "camliSync_bytesToCopy{%s} %d\n", labels, syncValue.BytesToCopy)
+		fmt.Fprintf(rw, "camliSync_bytesCopied{%s} %d\n", labels, syncValue.BytesCopied)
+		fmt.Fprintf(rw, "camliSync_blobsCopied{%s} %d\n", labels, syncValue.BlobsCopied)
+		fmt.Fprintf(rw, "camliSync_totalErrors{%s} %d\n", labels, syncValue.TotalErrors)
+		//fmt.Fprintf(rw, "camliSync_fromDesc{%s} %s\n", labels, syncValue.FromDesc)
+		//fmt.Fprintf(rw, "camliSync_toDesc{%s} %s\n", labels, syncValue.ToDesc)
+
+	}
+
+	fmt.Fprintln(rw, "# HELP camliStorage_primary Whether the described storage system is primary.")
+	fmt.Fprintln(rw, "# TYPE camliStorage_primary untyped")
+	fmt.Fprintln(rw, "# HELP camliStorage_approxBlobs Approximate number of blobs in the blobstore.")
+	fmt.Fprintln(rw, "# TYPE camliStorage_approxBlobs gauge")
+	fmt.Fprintln(rw, "# HELP camliStorage_approxBytes Approximate number of bytes in the blobstore.")
+	fmt.Fprintln(rw, "# TYPE camliStorage_approxBytes gauge")
+	for storageKey, storageValue := range status.Storage {
+		boolToString := func(b bool) string {
+			if b {
+				return "1"
+			} else {
+				return "0"
+			}
+		}
+		boolToInt := func(b bool) int {
+			if b {
+				return 1
+			} else {
+				return 0
+			}
+		}
+
+		labels := fmt.Sprintf("version=\"%s\", path=\"%s\", type=\"%s\", isIndex=\"%s\", primary=\"%s\"", quoted(status.Version), quoted(storageKey), quoted(storageValue.Type), boolToString(storageValue.IsIndex), boolToString(storageValue.Primary))
+		if storageValue.ApproxBlobs > 0 {
+			fmt.Fprintf(rw, "camliStorage_approxBlobs{%s} %d\n", labels, storageValue.ApproxBlobs)
+		}
+		if storageValue.ApproxBytes > 0 {
+			fmt.Fprintf(rw, "camliStorage_approxBytes{%s} %d\n", labels, storageValue.ApproxBytes)
+		}
+		fmt.Fprintf(rw, "camliStorage_primary{%s} %d\n", labels, boolToInt(storageValue.Primary))
+	}
+
+	fmt.Fprintln(rw, "# HELP camliImporter_startedUnixSec Unix timestamp, when did the latest import start.")
+	fmt.Fprintln(rw, "# TYPE counter")
+	fmt.Fprintln(rw, "# HELP camliImporter_finishedUnixSec Unix timestamp, latest time when an import finished.")
+	fmt.Fprintln(rw, "# TYPE counter")
+	importerAccounts := reflect.ValueOf(status.ImporterAccounts)
+	importerAccountsLen := importerAccounts.Len()
+	for idx := 0; idx < importerAccountsLen; idx++ {
+
+		importerValue := importerAccounts.Index(idx)
+
+		// using reflection because even if importer.accountStatus was
+		// a public struct, there would be an import cycle.
+		// TODO(ivucica): move importer.accountStatus to a separate
+		// package.
+		name := importerValue.FieldByName("Name").String()
+		typ := importerValue.FieldByName("Type").String()
+		href := importerValue.FieldByName("Href").String()
+		startedUnixSec := importerValue.FieldByName("StartedUnixSec").Int()
+		lastFinishedUnixSec := importerValue.FieldByName("LastFinishedUnixSec").Int()
+
+		labels := fmt.Sprintf("version=\"%s\", name=\"%s\", type=\"%s\", href=\"%s\"", quoted(status.Version), quoted(name), quoted(typ), quoted(href))
+
+		if startedUnixSec > 0 {
+			fmt.Fprintf(rw, "camliImporter_startedUnixSec{%s} %d\n", labels, startedUnixSec)
+		}
+		if lastFinishedUnixSec > 0 {
+			fmt.Fprintf(rw, "camliImporter_finishedUnixSec{%s} %d\n", labels, lastFinishedUnixSec)
+		}
+		fmt.Fprintf(rw, "camliImporter_exists{%s} 1\n", labels)
+	}
 }
 
 var quotedPrefix = regexp.MustCompile(`[;"]/(\S+?/)[&"]`)
